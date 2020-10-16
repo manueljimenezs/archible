@@ -22,11 +22,12 @@
           label: msdos
           name: root
           state: present
-    - name: Create FS (ext4)
-        filesystem:
-          dev: '{{ install_drive }}{{ root_partition_suffix }}'
-          fstype: ext4
-          force: yes
+      - name: Create FS (ext4)
+          filesystem:
+            dev: '{{ install_drive }}{{ root_partition_suffix }}'
+            fstype: ext4
+            force: yes
+        tags: create_fs
     - name: Mount FS
         block:
           - name: Get root uuid
@@ -37,3 +38,17 @@
           mount:
             path: /mnt
             src: UUID={{ root_uuid.stdout }}
+        tags: mount_fs
+    - name: rankmirrors
+      block:
+      - name: Install reflector (for rankmirrors)
+        pacman:
+          name:
+            - reflector
+          update_cache: yes
+      - name: rank mirrors
+        command: reflector --latest 100 -protocol http --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+      tags: mirrors
+
+
+
