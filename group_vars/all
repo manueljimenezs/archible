@@ -1,0 +1,19 @@
+user:
+  name: manu
+  fullname: Manu
+  uid: 1001
+
+timezone: Europe/Madrid
+locale: es_ES.UTF-8
+keymap: es
+
+hostname: archible
+
+install_drive: /dev/sda
+root_partition_suffix: '1'
+
+core_utils:
+ - vim
+ - sudo
+ - tmux
+ - network-manager

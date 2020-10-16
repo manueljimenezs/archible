@@ -2,18 +2,38 @@
 - hosts: localhost
   connection: local
   tasks:
-
-  - name: "just execute a ls -lrt command"
-    shell: "ls -lrt"
-    register: "output"
-
-  - name: Abort if the host is not an arch install
-    fail:
-      msg: "This host is not booted from the Arch install media!"
-    when: ansible_nodename != 'archiso'
-    tags:
-      - quick_exit
-  - name: Synchronize clock via NTP
-    command: timedatectl set-ntp true
-    tags:
-      - sync_clock
+    - name: "just execute a ls -lrt command"
+      shell: "ls -lrt"
+      register: "output"
+    - name: Abort if the host is not an arch install
+      fail:
+        msg: "This host is not booted from the Arch install media!"
+      when: ansible_nodename != 'archiso'
+      tags:
+        - quick_exit
+    - name: Synchronize clock via NTP
+      command: timedatectl set-ntp true
+      tags:
+        - sync_clock
+    block:
+      - name: Create root partition
+        parted:
+          device: '{{ install_drive }}'
+          label: msdos
+          name: root
+          state: present
+    - name: Create FS (ext4)
+        filesystem:
+          dev: '{{ install_drive }}{{ root_partition_suffix }}'
+          fstype: ext4
+          force: yes
+    - name: Mount FS
+        block:
+          - name: Get root uuid
+            command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
+            register: root_uuid
+            changed_when: false
+          - name: Mount root
+          mount:
+            path: /mnt
+            src: UUID={{ root_uuid.stdout }}
