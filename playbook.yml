@@ -1,6 +1,6 @@
 ---
-- hosts: localhost
-  connection: local
+- hosts: all
+  #connection: local
   tasks:
     - name: "just execute a ls -lrt command"
       shell: "ls -lrt"
@@ -15,40 +15,110 @@
       command: timedatectl set-ntp true
       tags:
         - sync_clock
-    block:
-      - name: Create root partition
-        parted:
-          device: '{{ install_drive }}'
-          label: msdos
-          name: root
-          state: present
-      - name: Create FS (ext4)
+    - name: Filesystems
+      block:
+        - name: Create root partition
+          parted:
+            device: '{{ install_drive }}'
+            label: msdos
+            number: 1
+            state: present
+        - name: Create FS (ext4)
           filesystem:
             dev: '{{ install_drive }}{{ root_partition_suffix }}'
             fstype: ext4
             force: yes
-        tags: create_fs
+          tags:
+            - create_fs
     - name: Mount FS
-        block:
-          - name: Get root uuid
-            command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
-            register: root_uuid
-            changed_when: false
-          - name: Mount root
+      block:
+        - name: Get root uuid
+          command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
+          register: root_uuid
+          changed_when: false
+        - name: Mount root
           mount:
             path: /mnt
             src: UUID={{ root_uuid.stdout }}
-        tags: mount_fs
+            fstype: ext4
+            state: mounted
+      tags:
+        - mount_fs
     - name: rankmirrors
       block:
-      - name: Install reflector (for rankmirrors)
-        pacman:
-          name:
-            - reflector
-          update_cache: yes
-      - name: rank mirrors
-        command: reflector --latest 100 -protocol http --protocol https --sort rate --save /etc/pacman.d/mirrorlist
-      tags: mirrors
-
-
+        - name: Install reflector (for rankmirrors)
+          pacman:
+            name:
+              - reflector
+            update_cache: yes
+        - name: rank mirrors
+          command: reflector --latest 100 --protocol http --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+      tags:
+        - mirrors
+    - name: run pacstrap
+      command: pacstrap /mnt base base-devel linux linux-firmware grub sudo vim networkmanager
+      tags:
+        - pacstrap
+    - name: generate fstab
+      command: genfstab -U /mnt >> /mnt/etc/fstab
+      tags:
+      - genfstab
+    - name: Set timezone
+      command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
+      tags:
+      - timezone
+    - name: Setup locales
+      block:
+        - name: Configure locale.gen
+          lineinfile:
+            dest: /mnt/etc/locale.gen
+            regexp: '{{ item.regex }}'
+            line: '{{ item.line }}'
+          loop:
+            - {regex: es_ES\.UTF-8 UTF-8, line: es_ES.UTF-8 UTF-8}
+            - {regex: es_ES ISO-8859-1, line: es_ES ISO-8859-1}
+        - name: Create locale.conf
+          copy:
+            content: "LANG=es_ES.UTF-8"
+            dest: /mnt/etc/locale.conf
+        - name: Create vconsole.conf
+          copy:
+            content: "KEYMAP=es"
+            dest: /mnt/etc/vconsole.conf
+        - name: Generate locales
+          command: arch-chroot /mnt locale-gen
+      tags:
+        - locales
+    - name: Set up initramfs
+      command: arch-chroot /mnt mkinitcpio -p linux
+      tags:
+      - mkinitcpio
+    - name: Set up grub
+      block:
+        - name: Install grub
+          command: arch-chroot /mnt grub-install --target=i386-pc {{ install_drive }}
+        - name: Create grub config
+          command: arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+      tags:
+        - grub
+    - name: Setup user account
+      block:
+        - name: Create user account
+          command: arch-chroot /mnt useradd --create-home --user-group --groups wheel {{ user_name }} --password {{ user_password }}
+    - name: Enable network
+      command: arch-chroot /mnt systemctl enable NetworkManager
+    - name: Give sudo access to wheel group
+      copy:
+        content: '%wheel ALL=(ALL) NOPASSWD: ALL'
+        dest: /mnt/etc/sudoers.d/wheel
+        validate: /usr/sbin/visudo --check --file=%s
+      tags:
+        - sudo
+    - name: Reboot
+      reboot:
+        connect_timeout: 1
+        reboot_timeout: 1
+      failed_when: false
+      tags:
+        - reboot
 
