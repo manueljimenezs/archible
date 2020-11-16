@@ -1,0 +1,25 @@
+user:
+  name: manu
+  fullname: Manu
+  uid: 1001
+
+timezone: Europe/Madrid
+locale: es_ES.UTF-8
+keymap: es
+
+hostname: archible
+
+install_drive: /dev/sda
+boot_partition_suffix: 1
+root_partition_suffix: 2
+
+core_utils:
+ - vim
+ - sudo
+ - tmux
+ - network-manager
+
+ansible_ssh_user: root
+
+user_name: manu
+user_password: '$6$iOKPa84BTnN7l7O4$HdLPgHq4iOv2f2Pza./w8bCEWNjHuwcYHJRKy.hCIzQTqNTugNH1TsoAkqLkHymzsbWTj6QjunoMkiQuOEYEd0'

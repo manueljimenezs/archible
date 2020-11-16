@@ -1,0 +1,166 @@
+---
+- hosts: all
+  #connection: local
+  tasks:
+    - name: "just execute a ls -lrt command"
+      shell: "ls -lrt"
+      register: "output"
+    - name: Abort if the host is not an arch install
+      fail:
+        msg: "This host is not booted from the Arch install media!"
+      when: ansible_nodename != 'archiso'
+      tags:
+        - quick_exit
+    - name: Synchronize clock via NTP
+      command: timedatectl set-ntp true
+      tags:
+        - sync_clock
+    - name: Filesystems
+      block:
+        - name: Wipe install drive and all its partitions
+          command: find /dev -wholename "{{ install_drive }}*" -exec wipefs --force --all {} \;
+          tags:
+          - wipefs
+        - name: Create ESP partition
+          parted:
+            device: '{{ install_drive }}'
+            label: gpt
+            number: 1
+            part_end: 512MB
+            flags: [boot, esp]
+            state: present
+        - name: Create root partition
+          parted:
+            device: '{{ install_drive }}'
+            label: gpt
+            number: 2
+            part_start: 512MB
+            state: present
+        - name: Create FS (ESP vfat)
+          filesystem:
+            dev: '{{ install_drive }}{{ boot_partition_suffix }}'
+            fstype: vfat
+            force: yes
+        - name: Create FS (ext4)
+          filesystem:
+            dev: '{{ install_drive }}{{ root_partition_suffix }}'
+            fstype: ext4
+            force: yes
+      tags:
+        - create_fs
+    - name: Mount FS
+      block:
+        - name: Get root uuid
+          command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
+          register: root_uuid
+          changed_when: false
+        - name: Get boot uuid
+          command: blkid -s UUID -o value '{{ install_drive }}{{ boot_partition_suffix }}'
+          register: boot_uuid
+          changed_when: false
+        - name: Mount root
+          mount:
+            path: /mnt
+            src: UUID={{ root_uuid.stdout }}
+            fstype: ext4
+            state: mounted
+        - name: Mount boot
+          mount:
+            path: /mnt/boot
+            src: UUID={{ boot_uuid.stdout }}
+            fstype: vfat
+            state: mounted
+      tags:
+        - mount_fs
+    - name: rankmirrors
+      block:
+        - name: Install reflector (for rankmirrors)
+          pacman:
+            name:
+              - reflector
+            update_cache: yes
+        - name: rank mirrors
+          command: reflector --latest 100 --protocol http --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+      tags:
+        - mirrors
+    - name: run pacstrap
+      command: pacstrap /mnt base base-devel linux linux-firmware sudo vim networkmanager openssh
+      tags:
+        - pacstrap
+    - name: generate fstab
+      command: genfstab -U /mnt >> /mnt/etc/fstab
+      tags:
+      - genfstab
+    - name: Set timezone
+      command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
+      tags:
+      - timezone
+    - name: Setup locales
+      block:
+        - name: Configure locale.gen
+          lineinfile:
+            dest: /mnt/etc/locale.gen
+            regexp: '{{ item.regex }}'
+            line: '{{ item.line }}'
+          loop:
+            - {regex: es_ES\.UTF-8 UTF-8, line: es_ES.UTF-8 UTF-8}
+            - {regex: es_ES ISO-8859-1, line: es_ES ISO-8859-1}
+        - name: Create locale.conf
+          copy:
+            content: "LANG=es_ES.UTF-8"
+            dest: /mnt/etc/locale.conf
+        - name: Create vconsole.conf
+          copy:
+            content: "KEYMAP=es"
+            dest: /mnt/etc/vconsole.conf
+        - name: Generate locales
+          command: arch-chroot /mnt locale-gen
+      tags:
+        - locales
+    - name: Set up initramfs
+      command: arch-chroot /mnt mkinitcpio -p linux
+      tags:
+      - mkinitcpio
+    - name: Set up systemd-boot
+      block:
+        - name: Install sd-boot
+          command: arch-chroot /mnt bootctl install
+    - name: Create arch loader entry
+      copy:
+        src: files/arch.conf
+        dest: /mnt/boot/loader/entries/arch.conf
+    - name: Set boot options
+      lineinfile:
+        path: /mnt/boot/loader/entries/arch.conf
+        regexp: '^options'
+        line: options root="UUID={{ root_uuid.stdout }}" rw
+    - name: Set default entry
+      lineinfile:
+        path: /mnt/boot/loader/loader.conf
+        regexp: '^default'
+        line: default arch
+      tags:
+        - systemd-boot
+    - name: Setup user account
+      block:
+        - name: Create user account
+          command: arch-chroot /mnt useradd --create-home --user-group --groups wheel {{ user_name }} --password {{ user_password }}
+    - name: Enable network
+      command: arch-chroot /mnt systemctl enable NetworkManager
+    - name: Give sudo access to wheel group
+      copy:
+        content: '%wheel ALL=(ALL) NOPASSWD: ALL'
+        dest: /mnt/etc/sudoers.d/wheel
+        validate: /usr/sbin/visudo --check --file=%s
+      tags:
+        - sudo
+    - name: Enable ssh
+      command: arch-chroot /mnt systemctl enable sshd
+    - name: Reboot
+      reboot:
+        connect_timeout: 1
+        reboot_timeout: 1
+      failed_when: false
+      tags:
+        - reboot
+
